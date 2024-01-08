@@ -76,7 +76,10 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
 
                     // Track change
                     if (oldState.trackData?.getKey() != newState.trackData?.getKey() && newState.trackData != null) {
-                        updateArtwork()
+                        viewModelScope.launch {
+                            delay(100)
+                            updateArtwork()
+                        }
                     }
                 }
             }
@@ -110,21 +113,19 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
         }
     }
 
-    private fun updateArtwork() {
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val artworkData = amRemoteService.getArtwork().await()
+    private suspend fun updateArtwork() = withContext(Dispatchers.IO) {
+        runCatching {
+            val artworkData = amRemoteService.getArtwork().await()
 
-                _playerState.update {
-                    val artworkBmp = artworkData.toBitmap()
-                    it.copy(
-                        artwork = artworkBmp
-                    )
-                }
-            }.onFailure {
-                Log.e("AMRemote", "error getting player state", it)
-                _connectionErrors.tryEmit(it)
+            _playerState.update {
+                val artworkBmp = artworkData.toBitmap()
+                it.copy(
+                    artwork = artworkBmp
+                )
             }
+        }.onFailure {
+            Log.e("AMRemote", "error getting player state", it)
+            _connectionErrors.tryEmit(it)
         }
     }
 
