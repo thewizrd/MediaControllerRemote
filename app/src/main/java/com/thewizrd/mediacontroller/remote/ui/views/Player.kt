@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PauseCircle
 import androidx.compose.material.icons.rounded.PlayCircleFilled
@@ -34,7 +35,6 @@ import androidx.compose.material.icons.rounded.ShuffleOn
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.StopCircle
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -145,7 +145,6 @@ fun PlayerScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerContent(
     modifier: Modifier = Modifier,
@@ -299,8 +298,20 @@ private fun PlayerSlider(progress: Float = 0f, duration: Float = 1f) {
     LinearProgressIndicator(
         modifier = Modifier.fillMaxWidth(),
         progress = indicatorProgress,
-        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        trackColor = Color(
+            ColorUtils.blendARGB(
+                MaterialTheme.colorScheme.primary.toArgb(),
+                Color.Black.toArgb(),
+                0.25f
+            )
+        ),
+        color = Color(
+            ColorUtils.blendARGB(
+                MaterialTheme.colorScheme.primary.toArgb(),
+                Color.White.toArgb(),
+                0.25f
+            )
+        ),
         strokeCap = StrokeCap.Round
     )
 }
@@ -321,9 +332,11 @@ private fun PlayerButtons(
     ) {
         val sideButtonsModifier = Modifier
             .size(sideButtonSize)
+            .clip(MaterialTheme.shapes.medium)
             .semantics { role = Role.Button }
         val extraButtonsModifier = Modifier
             .size(extraButtonSize)
+            .clip(RoundedCornerShape(4.dp))
             .semantics { role = Role.Button }
 
         Image(
@@ -370,6 +383,7 @@ private fun PlayerButtons(
             colorFilter = ColorFilter.tint(LocalContentColor.current),
             modifier = Modifier
                 .size(playerButtonSize)
+                .clip(RoundedCornerShape(playerButtonSize))
                 .semantics { role = Role.Button }
                 .clickable {
                     commandHandler.invoke(AppleMusicControlButtons.PLAYPAUSESTOP)
@@ -438,7 +452,6 @@ private fun PlayerDynamicTheme(
 
 @Preview(device = Devices.PHONE)
 @Preview(device = Devices.TABLET)
-@Preview(device = Devices.FOLDABLE)
 @Composable
 private fun PreviewPlayerContent() {
     val playerState = AMPlayerState(
