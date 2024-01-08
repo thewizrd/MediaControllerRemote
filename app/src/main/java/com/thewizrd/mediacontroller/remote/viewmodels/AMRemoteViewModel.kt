@@ -6,34 +6,35 @@ import androidx.lifecycle.viewModelScope
 import com.thewizrd.mediacontroller.remote.model.AMRemoteCommand
 import com.thewizrd.mediacontroller.remote.model.getKey
 import com.thewizrd.mediacontroller.remote.services.AMRemoteService
+import com.thewizrd.mediacontroller.remote.services.createAMRemoteService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
-import retrofit2.Retrofit
 import retrofit2.await
-import retrofit2.converter.moshi.MoshiConverterFactory
-import retrofit2.create
 import kotlin.coroutines.coroutineContext
 
 class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
-    private val amRemoteService: AMRemoteService = Retrofit.Builder()
-        .baseUrl(serviceBaseUrl)
-        .addConverterFactory(MoshiConverterFactory.create())
-        .build()
-        .create()
+    private val amRemoteService: AMRemoteService = createAMRemoteService(serviceBaseUrl)
 
     private val _playerState = MutableStateFlow(AMPlayerState())
+    private val _connectionErrors =
+        MutableSharedFlow<Throwable>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
     private var pollerJob: Job? = null
 
     val playerState = _playerState.stateIn(
@@ -49,15 +50,21 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 emit(state.toAMPlayerState())
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
+                _connectionErrors.tryEmit(it)
             }
 
             delay(1000)
         }
-    }.cancellable()
+    }.cancellable().flowOn(Dispatchers.IO)
+
+    val connectionErrors = _connectionErrors.shareIn(
+        viewModelScope,
+        SharingStarted.Lazily
+    )
 
     fun startPolling() {
         pollerJob?.cancel()
-        pollerJob = viewModelScope.launch {
+        pollerJob = viewModelScope.launch(Dispatchers.Default) {
             supervisorScope {
                 playerStateFlow.collectLatest { newState ->
                     val oldState = _playerState.value
@@ -81,7 +88,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
     }
 
     private fun updatePlayerState(includeArtwork: Boolean = false) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val state = amRemoteService.getPlayerState(includeArtwork).await()
 
@@ -98,12 +105,13 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 }
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
+                _connectionErrors.tryEmit(it)
             }
         }
     }
 
     private fun updateArtwork() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val artworkData = amRemoteService.getArtwork().await()
 
@@ -115,12 +123,13 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 }
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
+                _connectionErrors.tryEmit(it)
             }
         }
     }
 
     fun sendCommand(@AMRemoteCommand command: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 amRemoteService.sendPlayerCommand(command).await()
             }.onFailure {

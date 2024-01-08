@@ -7,54 +7,39 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
 import java.util.concurrent.Executors
 
-class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManager.DiscoveryListener,
+class NSDDiscoveryViewModel(app: Application) : BaseDiscoveryViewModel(app),
+    NsdManager.DiscoveryListener,
     NsdManager.ResolveListener {
     companion object {
-        const val TAG = "MDnsDiscovery"
-        const val SERVICE_TYPE = "_itunes-smtc._tcp"
-        const val SERVICE_NAME = "am-remote"
+        const val TAG = "NSDDiscovery"
     }
 
     private val nsdManager: NsdManager
-
-    private val _remoteServiceState =
-        MutableStateFlow(ServiceState(discoveryState = DiscoveryState.UNKNOWN))
-    private var discoveryTimer: Job? = null
-
-    val remoteServiceState = _remoteServiceState.stateIn(
-        viewModelScope,
-        SharingStarted.Eagerly,
-        _remoteServiceState.value
-    )
 
     init {
         nsdManager = app.getSystemService(Context.NSD_SERVICE) as NsdManager
     }
 
-    fun initializeDiscovery() {
+    override fun initializeDiscovery() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                runCatching {
+                    nsdManager.stopServiceDiscovery(this@NSDDiscoveryViewModel)
+                }
+
                 nsdManager.discoverServices(
                     SERVICE_TYPE,
                     NsdManager.PROTOCOL_DNS_SD,
                     this@NSDDiscoveryViewModel
                 )
 
-                discoveryTimer?.cancel()
+                stopDiscoveryTimer()
 
                 _remoteServiceState.update {
                     it.copy(
@@ -63,24 +48,16 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
                     )
                 }
 
-                discoveryTimer = launch {
-                    supervisorScope {
-                        delay(5000) // 5s
-
-                        if (isActive) {
-                            stopDiscovery()
-                        }
-                    }
-                }
+                startDiscoveryTimer()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
 
-    fun stopDiscovery() {
+    override fun stopDiscovery() {
         resetServiceState()
-        discoveryTimer?.cancel()
+        stopDiscoveryTimer()
 
         runCatching {
             nsdManager.stopServiceDiscovery(this@NSDDiscoveryViewModel)
@@ -94,20 +71,6 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
                 nsdManager.stopServiceResolution(this)
             }
         }
-    }
-
-    private fun resetServiceState() {
-        _remoteServiceState.update {
-            it.copy(
-                discoveryState = DiscoveryState.NOT_FOUND,
-                serviceInfo = null
-            )
-        }
-    }
-
-    override fun onCleared() {
-        stopDiscovery()
-        super.onCleared()
     }
 
     override fun onStartDiscoveryFailed(serviceType: String?, errorCode: Int) {
@@ -138,6 +101,10 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
 
         if (serviceInfo?.serviceType?.trimEnd('.') == SERVICE_TYPE) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                runCatching {
+                    nsdManager.unregisterServiceInfoCallback(serviceInfoCallback)
+                }
+
                 nsdManager.registerServiceInfoCallback(
                     serviceInfo,
                     Executors.newSingleThreadExecutor(),
@@ -154,7 +121,7 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
     override fun onServiceLost(serviceInfo: NsdServiceInfo?) {
         if (serviceInfo?.serviceType?.trimEnd('.') == SERVICE_TYPE) {
             // Service removed
-            discoveryTimer?.cancel()
+            stopDiscoveryTimer()
             resetServiceState()
         }
     }
@@ -173,7 +140,7 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
 
             override fun onServiceLost() {
                 // Service removed
-                discoveryTimer?.cancel()
+                stopDiscoveryTimer()
                 resetServiceState()
             }
 
@@ -185,7 +152,7 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
     override fun onServiceResolved(serviceInfo: NsdServiceInfo?) {
         if (serviceInfo?.serviceType?.trimEnd('.') == SERVICE_TYPE) {
             // Service found; stop timer
-            discoveryTimer?.cancel()
+            stopDiscoveryTimer()
 
             val hostName = serviceInfo.attributes["hostname"]?.decodeToString()
                 ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -196,10 +163,15 @@ class NSDDiscoveryViewModel(app: Application) : AndroidViewModel(app), NsdManage
             val port =
                 serviceInfo.attributes["port"]?.decodeToString() ?: serviceInfo.port.toString()
 
+            val serviceAddress = "http://${hostName}:${port}"
+
+            // Store server address
+            saveLastServiceAddress(serviceAddress)
+
             _remoteServiceState.update {
                 it.copy(
                     discoveryState = DiscoveryState.DISCOVERED,
-                    serviceInfo = "http://${hostName}:${port}"
+                    serviceInfo = serviceAddress
                 )
             }
         }

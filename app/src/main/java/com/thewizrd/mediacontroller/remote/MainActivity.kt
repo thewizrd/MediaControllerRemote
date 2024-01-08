@@ -12,11 +12,12 @@ import androidx.compose.runtime.getValue
 import com.thewizrd.mediacontroller.remote.ui.theme.MediaControllerRemoteTheme
 import com.thewizrd.mediacontroller.remote.ui.views.DiscoveryScreen
 import com.thewizrd.mediacontroller.remote.ui.views.PlayerScreen
+import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.DiscoveryState
 import com.thewizrd.mediacontroller.remote.viewmodels.MDnsDiscoveryViewModel
 
 class MainActivity : ComponentActivity() {
-    private val mDnsDiscoveryViewModel by viewModels<MDnsDiscoveryViewModel>()
+    private val mDnsDiscoveryViewModel: BaseDiscoveryViewModel by viewModels<MDnsDiscoveryViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +33,10 @@ class MainActivity : ComponentActivity() {
 
                 when (serviceState.discoveryState) {
                     DiscoveryState.DISCOVERED -> {
-                        PlayerScreen(serviceState = serviceState)
+                        PlayerScreen(
+                            discoveryViewModel = mDnsDiscoveryViewModel,
+                            serviceState = serviceState
+                        )
                     }
 
                     else -> {
@@ -48,7 +52,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        mDnsDiscoveryViewModel.initializeDiscovery()
+        mDnsDiscoveryViewModel.init()
     }
 
     override fun onPause() {

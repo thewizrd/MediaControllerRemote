@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -21,14 +20,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.thewizrd.mediacontroller.remote.R
+import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.DiscoveryState
-import com.thewizrd.mediacontroller.remote.viewmodels.MDnsDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.ServiceState
 
 @Composable
 fun DiscoveryScreen(
     modifier: Modifier = Modifier,
-    discoveryViewModel: MDnsDiscoveryViewModel,
+    discoveryViewModel: BaseDiscoveryViewModel,
     serviceState: ServiceState
 ) {
     // A surface container using the 'background' color from the theme
@@ -37,7 +36,7 @@ fun DiscoveryScreen(
         color = MaterialTheme.colorScheme.background
     ) {
         DiscoveryView(discoveryState = serviceState.discoveryState) {
-            discoveryViewModel.initializeDiscovery()
+            discoveryViewModel.init()
         }
     }
 }
