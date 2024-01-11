@@ -461,7 +461,7 @@ private fun PlayerDynamicTheme(
             val key = playerState.trackData.getKey()
 
             if (key != null && playerState.artwork != null) {
-                dominantColorState.updateColorsFromImage(key, playerState.artwork)
+                dominantColorState.updateColorsFromImage(key, playerState.artwork, false)
             } else {
                 dominantColorState.reset()
             }

@@ -99,17 +99,23 @@ class DominantColorState(
         else -> null
     }
 
-    suspend fun updateColorsFromImage(key: String, bitmap: Bitmap?) {
-        val result = calculateDominantColor(key, bitmap)
+    suspend fun updateColorsFromImage(key: String, bitmap: Bitmap?, useCache: Boolean = true) {
+        val result = calculateDominantColor(key, bitmap, useCache)
         color = result?.color ?: defaultColor
         onColor = result?.onColor ?: defaultOnColor
     }
 
-    private suspend fun calculateDominantColor(key: String, bitmap: Bitmap?): DominantColors? {
-        val cached = cache?.get(key)
-        if (cached != null) {
-            // If we already have the result cached, return early now...
-            return cached
+    private suspend fun calculateDominantColor(
+        key: String,
+        bitmap: Bitmap?,
+        useCache: Boolean = true
+    ): DominantColors? {
+        if (useCache) {
+            val cached = cache?.get(key)
+            if (cached != null) {
+                // If we already have the result cached, return early now...
+                return cached
+            }
         }
 
         // Otherwise we calculate the swatches in the image, and return the first valid color
