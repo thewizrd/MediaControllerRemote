@@ -1,9 +1,6 @@
 package com.thewizrd.mediacontroller.remote.ui.views
 
 import android.graphics.Bitmap
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.basicMarquee
@@ -201,8 +198,12 @@ fun PlayerContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(10f)
                 ) {
+                    var sliderProgress by remember(playerState.isPlaying, playerState.trackData) {
+                        mutableFloatStateOf(playerState.trackData?.progress?.toFloat() ?: 0f)
+                    }
+
                     PlayerSlider(
-                        progress = (playerState.trackData?.progress ?: 0).toFloat(),
+                        progress = sliderProgress,
                         duration = (playerState.trackData?.duration ?: 1).toFloat(),
                     )
                     PlayerButtons(
@@ -210,6 +211,15 @@ fun PlayerContent(
                         playerState = playerState,
                         commandHandler = commandHandler
                     )
+
+                    if (playerState.isPlaying && playerState.trackData != null) {
+                        LaunchedEffect(playerState.trackData) {
+                            while (isActive) {
+                                delay(100)
+                                sliderProgress += 100 / 1000f
+                            }
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.weight(1f))
             }
@@ -301,19 +311,11 @@ private fun PlayerMetadata(
 
 @Composable
 private fun PlayerSlider(progress: Float = 0f, duration: Float = 1f) {
-    val indicatorProgress: Float by animateFloatAsState(
-        if (duration > 0f && duration >= progress) {
-            progress / duration
-        } else {
-            0f
-        },
-        label = "indicatorProgress",
-        animationSpec = tween(
-            durationMillis = 150,
-            delayMillis = 50,
-            easing = FastOutLinearInEasing
-        )
-    )
+    val indicatorProgress: Float = if (duration > 0f && duration >= progress) {
+        progress / duration
+    } else {
+        0f
+    }
 
     LinearProgressIndicator(
         modifier = Modifier.fillMaxWidth(),
