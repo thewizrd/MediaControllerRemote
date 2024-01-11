@@ -30,3 +30,8 @@ fun TrackData?.getKey(): String? {
 data class ArtworkResponse(
     val artwork: String? = null
 )
+
+data class EventMessage(
+    val eventType: String,
+    val payload: PlayerStateResponse
+)

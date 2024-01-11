@@ -3,14 +3,17 @@ package com.thewizrd.mediacontroller.remote.viewmodels
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.squareup.moshi.Moshi
+import com.thewizrd.mediacontroller.remote.model.AMEventType
 import com.thewizrd.mediacontroller.remote.model.AMRemoteCommand
+import com.thewizrd.mediacontroller.remote.model.EventMessage
 import com.thewizrd.mediacontroller.remote.model.getKey
+import com.thewizrd.mediacontroller.remote.model.http.createRetrofitBuilder
 import com.thewizrd.mediacontroller.remote.services.AMRemoteService
 import com.thewizrd.mediacontroller.remote.services.createAMRemoteService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,8 +28,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import retrofit2.await
-import kotlin.coroutines.coroutineContext
+import retrofit2.create
+import java.util.concurrent.TimeUnit
 
 class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
     private val amRemoteService: AMRemoteService = createAMRemoteService(serviceBaseUrl)
@@ -43,17 +48,50 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
         _playerState.value
     )
 
-    private val playerStateFlow = flow {
-        while (coroutineContext.isActive) {
+    private val amEventFlow = flow {
+        supervisorScope {
             runCatching {
-                val state = amRemoteService.getPlayerState(false).await()
-                emit(state.toAMPlayerState())
+                val amSubService = createRetrofitBuilder()
+                    .baseUrl(serviceBaseUrl)
+                    .client(
+                        OkHttpClient.Builder()
+                            .readTimeout(0, TimeUnit.SECONDS) // keep-alive
+                            .cache(null)
+                            .build()
+                    )
+                    .build()
+                    .create<AMRemoteService>()
+
+                val response = amSubService.subscribeToEvents().await()
+
+                val moshi = Moshi.Builder().build()
+                val jsonAdapter = moshi.adapter(EventMessage::class.java)
+
+                response.byteStream().bufferedReader().use { reader ->
+                    while (coroutineContext.isActive) {
+                        val line = reader.readLine()
+
+                        when {
+                            line.startsWith("data: ") -> {
+                                runCatching {
+                                    val json = line.substringAfter("data: ")
+                                    val event = jsonAdapter.fromJson(json)!!
+                                    emit(event)
+                                }.onFailure {
+                                    Log.e("AMRemote", "error reading player state", it)
+                                }
+                            }
+
+                            line.isEmpty() -> {
+                                // empty line; data terminator
+                            }
+                        }
+                    }
+                }
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
                 _connectionErrors.tryEmit(it)
             }
-
-            delay(1000)
         }
     }.cancellable().flowOn(Dispatchers.IO)
 
@@ -66,19 +104,51 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
         pollerJob?.cancel()
         pollerJob = viewModelScope.launch(Dispatchers.Default) {
             supervisorScope {
-                playerStateFlow.collectLatest { newState ->
-                    val oldState = _playerState.value
+                amEventFlow.collectLatest { event ->
+                    Log.d("AMRemote", "event received - ${event.eventType}")
+                    Log.d(
+                        "AMRemote",
+                        "artwork - ${event.payload.artwork != null}; size = ${event.payload.artwork?.length ?: 0}"
+                    )
 
-                    _playerState.update {
-                        // Copy new state with existing artwork
-                        newState.copy(artwork = it.artwork)
-                    }
+                    when (event.eventType) {
+                        AMEventType.TRACK_CHANGE,
+                        AMEventType.PLAYER_STATE_CHANGED -> {
+                            val oldState = _playerState.value
+                            val newState = event.payload.toAMPlayerState()
 
-                    // Track change
-                    if (oldState.trackData?.getKey() != newState.trackData?.getKey() && newState.trackData != null) {
-                        viewModelScope.launch {
-                            delay(100)
-                            updateArtwork()
+                            _playerState.update {
+                                if (event.eventType == AMEventType.PLAYER_STATE_CHANGED) {
+                                    newState.copy(
+                                        artwork = newState.artwork ?: oldState.artwork,
+                                        trackData = oldState.trackData?.let { t ->
+                                            t.copy(
+                                                progress = newState.trackData?.progress
+                                                    ?: t.progress
+                                            )
+                                        } ?: newState.trackData
+                                    )
+                                } else {
+                                    // Copy new state with existing artwork
+                                    if (newState.artwork != null) {
+                                        newState
+                                    } else {
+                                        newState.copy(artwork = it.artwork)
+                                    }
+                                }
+                            }
+
+                            if (event.eventType == AMEventType.TRACK_CHANGE) {
+                                // Track change
+                                Log.d(
+                                    "AMRemote",
+                                    "track change - old = ${oldState.trackData?.getKey()}; new = ${newState.trackData?.getKey()}"
+                                )
+                                if (oldState.trackData?.getKey() != newState.trackData?.getKey() && newState.trackData?.name != null && newState.artwork == null) {
+                                    Log.d("AMRemote", "track change; fetching artwork")
+                                    _playerState.update { it.copy(artwork = null) }
+                                }
+                            }
                         }
                     }
                 }
@@ -90,38 +160,20 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
         pollerJob?.cancel()
     }
 
-    private fun updatePlayerState(includeArtwork: Boolean = false) {
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val state = amRemoteService.getPlayerState(includeArtwork).await()
-
-                _playerState.update {
-                    if (includeArtwork) {
-                        withContext(Dispatchers.IO) {
-                            state.toAMPlayerState()
-                        }
-                    } else {
-                        state.toAMPlayerState().copy(
-                            artwork = it.artwork
-                        )
-                    }
-                }
-            }.onFailure {
-                Log.e("AMRemote", "error getting player state", it)
-                _connectionErrors.tryEmit(it)
-            }
-        }
-    }
-
-    private suspend fun updateArtwork() = withContext(Dispatchers.IO) {
+    suspend fun updatePlayerState(includeArtwork: Boolean = false) = withContext(Dispatchers.IO) {
         runCatching {
-            val artworkData = amRemoteService.getArtwork().await()
+            val state = amRemoteService.getPlayerState(includeArtwork).await()
 
             _playerState.update {
-                val artworkBmp = artworkData.toBitmap()
-                it.copy(
-                    artwork = artworkBmp
-                )
+                if (includeArtwork) {
+                    withContext(Dispatchers.IO) {
+                        state.toAMPlayerState()
+                    }
+                } else {
+                    state.toAMPlayerState().copy(
+                        artwork = it.artwork
+                    )
+                }
             }
         }.onFailure {
             Log.e("AMRemote", "error getting player state", it)
@@ -129,13 +181,25 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
         }
     }
 
-    fun sendCommand(@AMRemoteCommand command: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                amRemoteService.sendPlayerCommand(command).await()
-            }.onFailure {
-                Log.e("AMRemote", "error sending command", it)
+    private suspend fun updateArtwork() = withContext(Dispatchers.IO) {
+        runCatching {
+            val artworkData = amRemoteService.getArtwork().await()
+            val artworkBmp = artworkData.toBitmap()
+
+            _playerState.update {
+                it.copy(artwork = artworkBmp)
             }
+        }.onFailure {
+            Log.e("AMRemote", "error getting player state", it)
+            _connectionErrors.tryEmit(it)
+        }
+    }
+
+    suspend fun sendCommand(@AMRemoteCommand command: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            amRemoteService.sendPlayerCommand(command).await()
+        }.onFailure {
+            Log.e("AMRemote", "error sending command", it)
         }
     }
 

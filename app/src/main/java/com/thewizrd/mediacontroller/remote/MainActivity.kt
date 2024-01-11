@@ -9,6 +9,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import com.thewizrd.mediacontroller.remote.ui.theme.MediaControllerRemoteTheme
 import com.thewizrd.mediacontroller.remote.ui.views.DiscoveryScreen
 import com.thewizrd.mediacontroller.remote.ui.views.PlayerScreen
@@ -18,6 +20,10 @@ import com.thewizrd.mediacontroller.remote.viewmodels.MDnsDiscoveryViewModel
 
 class MainActivity : ComponentActivity() {
     private val mDnsDiscoveryViewModel: BaseDiscoveryViewModel by viewModels<MDnsDiscoveryViewModel>()
+
+    private val customViewModelStoreOwner = object : ViewModelStoreOwner {
+        override val viewModelStore: ViewModelStore = ViewModelStore()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,6 +41,7 @@ class MainActivity : ComponentActivity() {
                     DiscoveryState.DISCOVERED -> {
                         PlayerScreen(
                             discoveryViewModel = mDnsDiscoveryViewModel,
+                            viewModelStoreOwner = customViewModelStoreOwner,
                             serviceState = serviceState
                         )
                     }
@@ -58,5 +65,6 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         mDnsDiscoveryViewModel.stopDiscovery()
+        customViewModelStoreOwner.viewModelStore.clear()
     }
 }

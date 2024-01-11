@@ -31,3 +31,9 @@ object MediaPlaybackAutoRepeatMode {
     const val TRACK = "Track"
     const val LIST = "List"
 }
+
+object AMEventType {
+    const val UNKNOWN = "Unknown"
+    const val TRACK_CHANGE = "TrackChange"
+    const val PLAYER_STATE_CHANGED = "PlayerStateChanged"
+}

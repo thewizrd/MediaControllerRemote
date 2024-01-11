@@ -4,12 +4,14 @@ import com.thewizrd.mediacontroller.remote.model.AMRemoteCommand
 import com.thewizrd.mediacontroller.remote.model.ArtworkResponse
 import com.thewizrd.mediacontroller.remote.model.PlayerStateResponse
 import com.thewizrd.mediacontroller.remote.model.http.createRetrofitBuilder
+import okhttp3.ResponseBody
 import retrofit2.Call
 import retrofit2.create
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 interface AMRemoteService {
     @GET("api/am-remote/playerState")
@@ -23,6 +25,10 @@ interface AMRemoteService {
 
     @GET("api/am-remote/ping")
     fun ping(): Call<Unit>
+
+    @GET("api/am-remote/subscribe")
+    @Streaming
+    fun subscribeToEvents(): Call<ResponseBody>
 }
 
 fun createAMRemoteService(serviceBaseUrl: String): AMRemoteService {

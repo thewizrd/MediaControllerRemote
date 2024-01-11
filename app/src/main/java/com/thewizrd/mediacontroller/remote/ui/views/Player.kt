@@ -45,6 +45,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +68,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.ColorUtils
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -85,7 +90,10 @@ import com.thewizrd.mediacontroller.remote.viewmodels.AMPlayerState
 import com.thewizrd.mediacontroller.remote.viewmodels.AMRemoteViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.ServiceState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -93,10 +101,12 @@ import java.util.concurrent.TimeUnit
 fun PlayerScreen(
     modifier: Modifier = Modifier,
     discoveryViewModel: BaseDiscoveryViewModel,
+    viewModelStoreOwner: ViewModelStoreOwner,
     serviceState: ServiceState
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val amRemoteViewModel = viewModel<AMRemoteViewModel>(
+        viewModelStoreOwner = viewModelStoreOwner,
         factory = viewModelFactory {
             initializer {
                 val serviceInfo = serviceState.serviceInfo!!
@@ -110,11 +120,15 @@ fun PlayerScreen(
         modifier = modifier,
         playerState = playerState,
         commandHandler = { command ->
-            amRemoteViewModel.sendCommand(command)
+            lifecycleOwner.lifecycleScope.launch {
+                amRemoteViewModel.sendCommand(command)
+            }
         }
     )
 
     LaunchedEffect(lifecycleOwner) {
+        amRemoteViewModel.updatePlayerState(true)
+
         amRemoteViewModel.startPolling()
 
         amRemoteViewModel.connectionErrors.collectLatest {
@@ -127,6 +141,12 @@ fun PlayerScreen(
     DisposableEffect(lifecycleOwner) {
         onDispose {
             amRemoteViewModel.stopPolling()
+        }
+    }
+
+    DisposableEffect(serviceState) {
+        onDispose {
+            viewModelStoreOwner.viewModelStore.clear()
         }
     }
 }
