@@ -189,7 +189,7 @@ fun PlayerContent(
                 Spacer(modifier = Modifier.weight(1f))
                 PlayerAlbumArt(
                     modifier = Modifier.weight(10f),
-                    artworkBitmap = playerState.artwork
+                    artworkBitmap = playerState.artwork?.bitmap
                 )
                 Spacer(modifier = Modifier.height(32.dp))
                 PlayerMetadata(playerState = playerState)
@@ -462,8 +462,8 @@ private fun PlayerDynamicTheme(
         LaunchedEffect(playerState.artwork) {
             val key = playerState.trackData.getKey()
 
-            if (key != null && playerState.artwork != null) {
-                dominantColorState.updateColorsFromImage(key, playerState.artwork, false)
+            if (key != null && playerState.artwork?.bitmap != null) {
+                dominantColorState.updateColorsFromImage(key, playerState.artwork.bitmap, false)
             } else {
                 dominantColorState.reset()
             }

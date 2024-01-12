@@ -120,7 +120,8 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                             _playerState.update {
                                 if (event.eventType == AMEventType.PLAYER_STATE_CHANGED) {
                                     newState.copy(
-                                        artwork = newState.artwork ?: oldState.artwork,
+                                        artwork = newState.artwork?.takeIf { it.artworkBytes != null }
+                                            ?: oldState.artwork,
                                         trackData = oldState.trackData?.let { t ->
                                             t.copy(
                                                 progress = newState.trackData?.progress
@@ -130,7 +131,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                                     )
                                 } else {
                                     // Copy new state with existing artwork
-                                    if (newState.artwork != null) {
+                                    if (newState.artwork?.artworkBytes != null) {
                                         newState
                                     } else {
                                         newState.copy(artwork = it.artwork)
@@ -144,7 +145,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                                     "AMRemote",
                                     "track change - old = ${oldState.trackData?.getKey()}; new = ${newState.trackData?.getKey()}"
                                 )
-                                if (oldState.trackData?.getKey() != newState.trackData?.getKey() && newState.trackData?.name != null && newState.artwork == null) {
+                                if (oldState.trackData?.getKey() != newState.trackData?.getKey() && newState.trackData?.name != null && newState.artwork?.artworkBytes == null) {
                                     Log.d("AMRemote", "track change; fetching artwork")
                                     _playerState.update { it.copy(artwork = null) }
                                 }
@@ -184,10 +185,9 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
     private suspend fun updateArtwork() = withContext(Dispatchers.IO) {
         runCatching {
             val artworkData = amRemoteService.getArtwork().await()
-            val artworkBmp = artworkData.toBitmap()
 
             _playerState.update {
-                it.copy(artwork = artworkBmp)
+                it.copy(artwork = artworkData.toArtwork())
             }
         }.onFailure {
             Log.e("AMRemote", "error getting player state", it)
