@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import retrofit2.await
 import retrofit2.create
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
@@ -90,7 +91,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 }
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
-                _connectionErrors.tryEmit(it)
+                handleConnectionError(it)
             }
         }
     }.cancellable().flowOn(Dispatchers.IO)
@@ -178,7 +179,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
             }
         }.onFailure {
             Log.e("AMRemote", "error getting player state", it)
-            _connectionErrors.tryEmit(it)
+            handleConnectionError(it)
         }
     }
 
@@ -191,7 +192,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
             }
         }.onFailure {
             Log.e("AMRemote", "error getting player state", it)
-            _connectionErrors.tryEmit(it)
+            handleConnectionError(it)
         }
     }
 
@@ -200,6 +201,13 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
             amRemoteService.sendPlayerCommand(command).await()
         }.onFailure {
             Log.e("AMRemote", "error sending command", it)
+            handleConnectionError(it)
+        }
+    }
+
+    private fun handleConnectionError(ex: Throwable) {
+        if (ex is IOException) {
+            _connectionErrors.tryEmit(ex)
         }
     }
 

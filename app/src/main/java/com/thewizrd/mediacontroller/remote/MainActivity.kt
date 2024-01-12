@@ -9,21 +9,19 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.lifecycleScope
+import com.thewizrd.mediacontroller.remote.services.background.AMControllerService
 import com.thewizrd.mediacontroller.remote.ui.theme.MediaControllerRemoteTheme
 import com.thewizrd.mediacontroller.remote.ui.views.DiscoveryScreen
 import com.thewizrd.mediacontroller.remote.ui.views.PlayerScreen
 import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.DiscoveryState
 import com.thewizrd.mediacontroller.remote.viewmodels.MDnsDiscoveryViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val mDnsDiscoveryViewModel: BaseDiscoveryViewModel by viewModels<MDnsDiscoveryViewModel>()
-
-    private val customViewModelStoreOwner = object : ViewModelStoreOwner {
-        override val viewModelStore: ViewModelStore = ViewModelStore()
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,9 +38,7 @@ class MainActivity : ComponentActivity() {
                 when (serviceState.discoveryState) {
                     DiscoveryState.DISCOVERED -> {
                         PlayerScreen(
-                            discoveryViewModel = mDnsDiscoveryViewModel,
-                            viewModelStoreOwner = customViewModelStoreOwner,
-                            serviceState = serviceState
+                            discoveryViewModel = mDnsDiscoveryViewModel
                         )
                     }
 
@@ -52,6 +48,14 @@ class MainActivity : ComponentActivity() {
                             serviceState = serviceState
                         )
                     }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            mDnsDiscoveryViewModel.remoteServiceState.collectLatest {
+                if (it.discoveryState == DiscoveryState.DISCOVERED && it.serviceInfo != null) {
+                    AMControllerService.startService(applicationContext, it.serviceInfo)
                 }
             }
         }
@@ -65,6 +69,5 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         mDnsDiscoveryViewModel.stopDiscovery()
-        customViewModelStoreOwner.viewModelStore.clear()
     }
 }
