@@ -123,11 +123,11 @@ class MediaControllerViewModel(private val ctx: Application) : AndroidViewModel(
     fun sendPlayerCommand(@AMRemoteCommand command: String) {
         when (command) {
             AppleMusicControlButtons.SKIPBACK -> {
-                controller?.seekToPrevious()
+                controller?.seekToPreviousMediaItem()
             }
 
             AppleMusicControlButtons.SKIPFORWARD -> {
-                controller?.seekToNext()
+                controller?.seekToNextMediaItem()
             }
 
             AppleMusicControlButtons.PLAYPAUSESTOP -> {

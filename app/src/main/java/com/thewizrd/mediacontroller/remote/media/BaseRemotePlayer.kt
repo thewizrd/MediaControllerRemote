@@ -23,7 +23,6 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.ListenerSet
 import androidx.media3.common.util.Size
-import java.util.concurrent.TimeUnit
 
 abstract class BaseRemotePlayer : BasePlayer() {
     protected val listeners: ListenerSet<Player.Listener> = ListenerSet(
@@ -93,46 +92,7 @@ abstract class BaseRemotePlayer : BasePlayer() {
     override fun setPlaylistMetadata(mediaMetadata: MediaMetadata) {}
     override fun getPlaylistMetadata(): MediaMetadata = MediaMetadata.EMPTY
 
-    override fun getCurrentTimeline(): Timeline = object : Timeline() {
-        override fun getWindowCount(): Int = 1
-
-        override fun getWindow(
-            windowIndex: Int,
-            window: Window,
-            defaultPositionProjectionUs: Long
-        ): Window {
-            window.set(
-                0,
-                MediaItem.Builder()
-                    .setMediaMetadata(mediaMetadata)
-                    .build(),
-                null,
-                C.TIME_UNSET,
-                C.TIME_UNSET,
-                C.TIME_UNSET,
-                false,
-                false,
-                null,
-                0,
-                TimeUnit.MILLISECONDS.toMicros(duration),
-                0,
-                0,
-                0
-            )
-            return window
-        }
-
-        override fun getPeriodCount(): Int = 1
-
-        override fun getPeriod(periodIndex: Int, period: Period, setIds: Boolean): Period {
-            period.set(0, 0, 0, TimeUnit.MILLISECONDS.toMicros(duration), 0)
-            return period
-        }
-
-        override fun getIndexOfPeriod(uid: Any): Int = 0
-
-        override fun getUidOfPeriod(periodIndex: Int): Any = 0
-    }
+    override fun getCurrentTimeline(): Timeline = RemoteTimeline.DEFAULT
 
     override fun getCurrentPeriodIndex(): Int = C.INDEX_UNSET
     override fun getCurrentMediaItemIndex(): Int = 0
