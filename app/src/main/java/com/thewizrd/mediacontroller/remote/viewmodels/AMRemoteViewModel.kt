@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -66,7 +67,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 val response = amSubService.subscribeToEvents().await()
 
                 val moshi = Moshi.Builder().build()
-                val jsonAdapter = moshi.adapter(EventMessage::class.java)
+                val jsonAdapter = moshi.adapter(EventMessage::class.java).lenient()
 
                 response.byteStream().bufferedReader().use { reader ->
                     while (coroutineContext.isActive) {
@@ -92,9 +93,13 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
             }.onFailure {
                 Log.e("AMRemote", "error getting player state", it)
                 handleConnectionError(it)
+                throw it
             }
         }
-    }.cancellable().flowOn(Dispatchers.IO)
+    }
+        .retry(retries = 1) { it is IOException }
+        .cancellable()
+        .flowOn(Dispatchers.IO)
 
     val connectionErrors = _connectionErrors.shareIn(
         viewModelScope,

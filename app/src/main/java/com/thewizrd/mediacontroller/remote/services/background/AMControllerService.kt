@@ -8,36 +8,35 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.C
-import androidx.media3.common.DeviceInfo
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.Commands
-import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
-import com.google.common.util.concurrent.Futures
-import com.google.common.util.concurrent.ListenableFuture
 import com.thewizrd.mediacontroller.remote.MainActivity
+import com.thewizrd.mediacontroller.remote.media.BaseRemotePlayer
 import com.thewizrd.mediacontroller.remote.model.AppleMusicControlButtons
 import com.thewizrd.mediacontroller.remote.model.MediaPlaybackAutoRepeatMode
+import com.thewizrd.mediacontroller.remote.preferences.PREFKEY_LASTSERVICEADDRESS
+import com.thewizrd.mediacontroller.remote.preferences.dataStore
 import com.thewizrd.mediacontroller.remote.viewmodels.AMPlayerState
 import com.thewizrd.mediacontroller.remote.viewmodels.AMRemoteViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.guava.asListenableFuture
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -78,6 +77,7 @@ class AMControllerService : CustomMediaControllerService() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private lateinit var notificationManager: NotificationManagerCompat
 
     private var mediaSession: MediaSession? = null
     private lateinit var baseServiceUrl: String
@@ -85,12 +85,21 @@ class AMControllerService : CustomMediaControllerService() {
 
     private lateinit var amRemoteViewModel: Lazy<AMRemoteViewModel>
 
-    private var isPlaying = false
+    private var isConnected = false
     private var progressJob: Job? = null
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+
+        notificationManager = NotificationManagerCompat.from(this@AMControllerService)
+
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId(NOT_CHANNEL_ID)
+                .setNotificationId(JOB_ID)
+                .build()
+        )
 
         amRemoteViewModel = viewModels<AMRemoteViewModel>(
             factoryProducer = {
@@ -108,37 +117,13 @@ class AMControllerService : CustomMediaControllerService() {
 
     @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
+        val result = super.onStartCommand(intent, flags, startId)
 
         when (intent?.action) {
             ACTION_START_SERVICE -> {
                 intent.getStringExtra(EXTRA_SERVICE_URL)?.let { url ->
                     baseServiceUrl = url
-
-                    scope.launch {
-                        val vm = amRemoteViewModel.value
-
-                        vm.updatePlayerState(true)
-                        vm.startPolling()
-
-                        scope.launch {
-                            vm.connectionErrors.collectLatest {
-                                if (it is IOException) {
-                                    stopSelf()
-                                }
-                            }
-                        }
-
-                        scope.launch {
-                            vm.playerState.collect { state ->
-                                playerState = state
-                                isPlaying = state.isPlaying
-                                (mediaSession?.player as? MediaPlayer)?.invalidatePlayerState()
-
-                                resetPlayerPositionJob()
-                            }
-                        }
-                    }
+                    initializeAMRemote()
                 } ?: stopSelf()
             }
 
@@ -171,7 +156,7 @@ class AMControllerService : CustomMediaControllerService() {
             }
         }
 
-        return START_NOT_STICKY
+        return result
     }
 
     @OptIn(UnstableApi::class)
@@ -183,8 +168,10 @@ class AMControllerService : CustomMediaControllerService() {
         }
         progressJob?.cancel()
         scope.cancel()
-        mediaSession?.release()
+        isConnected = false
         mediaSession?.player?.release()
+        mediaSession?.release()
+        mediaSession = null
         super.onDestroy()
     }
 
@@ -200,142 +187,135 @@ class AMControllerService : CustomMediaControllerService() {
         }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
-        mediaSession
+    private fun initializeAMRemote() {
+        if (!isConnected) {
+            scope.launch {
+                val vm = amRemoteViewModel.value
+
+                vm.updatePlayerState(true)
+                vm.startPolling()
+
+                scope.launch {
+                    vm.connectionErrors.collectLatest {
+                        if (it is IOException) {
+                            isConnected = false
+                            stopSelf()
+                        }
+                    }
+                }
+
+                scope.launch {
+                    vm.playerState.collect { state ->
+                        val oldState = playerState
+
+                        playerState = state
+
+                        resetPlayerPositionJob()
+                        (mediaSession?.player as? MediaPlayer)?.invalidatePlayerState(
+                            oldState,
+                            state
+                        )
+                    }
+                }
+            }
+
+            isConnected = true
+        }
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        scope.launch {
+            val url = applicationContext.dataStore.data.map {
+                it[PREFKEY_LASTSERVICEADDRESS]
+            }.first()
+
+            if (url != null) {
+                baseServiceUrl = url
+                initializeAMRemote()
+            }
+        }
+
+        return mediaSession
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         mediaSession?.player?.let { player ->
             if (!player.playWhenReady || player.mediaItemCount == 0) {
                 stopSelf()
             }
+        } ?: {
+            stopSelf()
         }
     }
 
     @UnstableApi
-    private inner class MediaPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
-        override fun getState(): State {
-            return State.Builder()
-                .setAvailableCommands(
-                    Commands.Builder()
-                        .apply {
-                            if (playerState?.skipBackEnabled == true) {
-                                add(Player.COMMAND_SEEK_TO_PREVIOUS)
-                                add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                            }
-                        }
-                        .add(Player.COMMAND_PLAY_PAUSE)
-                        .add(Player.COMMAND_STOP)
-                        .apply {
-                            if (playerState?.skipForwardEnabled == true) {
-                                add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                                add(Player.COMMAND_SEEK_TO_NEXT)
-                            }
-                        }
-                        .add(Player.COMMAND_SET_SHUFFLE_MODE)
-                        .add(Player.COMMAND_SET_REPEAT_MODE)
-                        .add(Player.COMMAND_GET_METADATA)
-                        .add(Player.COMMAND_GET_TIMELINE)
-                        .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
-                        .build()
-                )
-                .setPlaybackState(STATE_READY)
-                .setShuffleModeEnabled(playerState?.shuffleEnabled ?: false)
-                .setRepeatMode(
-                    when (playerState?.repeatMode) {
-                        MediaPlaybackAutoRepeatMode.LIST -> REPEAT_MODE_ALL
-                        MediaPlaybackAutoRepeatMode.TRACK -> REPEAT_MODE_ONE
-                        else -> REPEAT_MODE_OFF
+    private inner class MediaPlayer : BaseRemotePlayer() {
+        override fun getAvailableCommands(): Commands {
+            return Commands.Builder()
+                .apply {
+                    if (playerState?.skipBackEnabled == true) {
+                        add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                     }
-                )
-                .setContentPositionMs {
-                    playerState?.trackData?.progress?.times(1000)?.toLong() ?: 0
                 }
-                .setPlaylist(
-                    listOf(
-                        MediaItemData.Builder(0)
-                            .setDurationUs(
-                                playerState?.trackData?.duration?.toLong()
-                                    ?.takeIf { it >= 0 }
-                                    ?.let { TimeUnit.SECONDS.toMicros(it) }
-                                    ?: C.TIME_UNSET
-                            )
-                            .setIsSeekable(false)
-                            .setMediaMetadata(
-                                playerState?.trackData?.let {
-                                    MediaMetadata.Builder()
-                                        .setTitle(it.name)
-                                        .setArtist(it.artist)
-                                        .setAlbumTitle(it.album)
-                                        .setArtworkData(
-                                            playerState?.artwork?.artworkBytes,
-                                            MediaMetadata.PICTURE_TYPE_FRONT_COVER
-                                        )
-                                        .build()
-                                } ?: MediaMetadata.EMPTY
-                            )
-                            .build(),
-                        MediaItemData.Builder(1).build()
-                    )
-                )
-                .setCurrentMediaItemIndex(C.INDEX_UNSET)
-                .setPlayWhenReady(
-                    this@AMControllerService.isPlaying,
-                    PLAY_WHEN_READY_CHANGE_REASON_REMOTE
-                )
-                .setDeviceInfo(
-                    DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
-                        .build()
-                )
+                .add(Player.COMMAND_PLAY_PAUSE)
+                .add(Player.COMMAND_STOP)
+                .apply {
+                    if (playerState?.skipForwardEnabled == true) {
+                        add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        add(Player.COMMAND_SEEK_TO_NEXT)
+                    }
+                }
+                .add(Player.COMMAND_SET_SHUFFLE_MODE)
+                .add(Player.COMMAND_SET_REPEAT_MODE)
+                .add(Player.COMMAND_GET_METADATA)
+                .add(Player.COMMAND_GET_TIMELINE)
+                .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
                 .build()
         }
 
-        fun invalidatePlayerState() {
-            scope.launch(Dispatchers.Main) {
-                invalidateState()
-            }
-        }
-
-        override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean): ListenableFuture<*> {
-            return scope.async {
-                amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.SHUFFLE)
-            }.asListenableFuture()
-        }
-
-        override fun handleSetRepeatMode(repeatMode: Int): ListenableFuture<*> {
-            return scope.async {
-                amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.REPEAT)
-            }.asListenableFuture()
-        }
-
-        override fun handleSetPlaylistMetadata(playlistMetadata: MediaMetadata): ListenableFuture<*> {
-            return Futures.immediateVoidFuture()
-        }
-
-        override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
-            return scope.async {
+        override fun setPlayWhenReady(playWhenReady: Boolean) {
+            scope.launch {
                 val result =
                     amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.PLAYPAUSESTOP)
 
-                if (result.isSuccess) {
-                    this@AMControllerService.isPlaying = playWhenReady
+                if (result.isSuccess && !playWhenReady) {
+                    progressJob?.cancel()
                 }
-
-                result
-            }.asListenableFuture()
+            }
         }
 
-        override fun handleStop(): ListenableFuture<*> {
-            return scope.async {
-                amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.PLAYPAUSESTOP)
-            }.asListenableFuture()
+        override fun getPlayWhenReady(): Boolean = playerState?.isPlaying == true
+
+        override fun setRepeatMode(repeatMode: Int) {
+            scope.launch {
+                amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.REPEAT)
+            }
         }
 
-        override fun handleSeek(
+        override fun getRepeatMode(): Int {
+            return when (playerState?.repeatMode) {
+                MediaPlaybackAutoRepeatMode.LIST -> REPEAT_MODE_ALL
+                MediaPlaybackAutoRepeatMode.TRACK -> REPEAT_MODE_ONE
+                else -> REPEAT_MODE_OFF
+            }
+        }
+
+        override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) {
+            scope.launch {
+                amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.SHUFFLE)
+            }
+        }
+
+        override fun getShuffleModeEnabled(): Boolean = playerState?.shuffleEnabled == true
+
+        override fun seekTo(
             mediaItemIndex: Int,
             positionMs: Long,
-            seekCommand: Int
-        ): ListenableFuture<*> {
-            return scope.async {
+            seekCommand: Int,
+            isRepeatingCurrentItem: Boolean
+        ) {
+            scope.launch {
                 when (seekCommand) {
                     COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
                     COMMAND_SEEK_TO_NEXT -> {
@@ -349,21 +329,115 @@ class AMControllerService : CustomMediaControllerService() {
 
                     else -> {}
                 }
-            }.asListenableFuture()
+            }
+        }
+
+        override fun stop() {
+            stopSelf()
+        }
+
+        override fun release() {
+            if (amRemoteViewModel.isInitialized()) {
+                amRemoteViewModel.value.stopPolling()
+            }
+        }
+
+        override fun getMediaMetadata(): MediaMetadata {
+            return playerState?.trackData?.let {
+                MediaMetadata.Builder()
+                    .setTitle(it.name)
+                    .setArtist(it.artist)
+                    .setAlbumTitle(it.album)
+                    .setArtworkData(
+                        playerState?.artwork?.artworkBytes,
+                        MediaMetadata.PICTURE_TYPE_FRONT_COVER
+                    )
+                    .build()
+            } ?: MediaMetadata.EMPTY
+        }
+
+        override fun getDuration(): Long {
+            return playerState?.trackData?.duration?.toLong()
+                ?.takeIf { it >= 0 }
+                ?.let { TimeUnit.SECONDS.toMillis(it) }
+                ?: C.TIME_UNSET
+        }
+
+        override fun getCurrentPosition(): Long {
+            return playerState?.trackData?.progress?.times(1000)?.toLong() ?: 0
+        }
+
+        fun invalidatePlayerState(oldState: AMPlayerState?, newState: AMPlayerState) {
+            scope.launch(Dispatchers.Main) {
+                if (newState.trackData != oldState?.trackData) {
+                    listeners.queueEvent(
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                    ) {
+                        it.onMediaMetadataChanged(mediaMetadata)
+                    }
+                }
+                if (newState.isPlaying != oldState?.isPlaying) {
+                    /*
+                    listeners.queueEvent(
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                    ) {
+                        it.onPlaybackStateChanged(playbackState)
+                    }
+                     */
+                    listeners.queueEvent(
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                    ) {
+                        it.onIsPlayingChanged(isPlaying)
+                    }
+                    /*
+                    listeners.queueEvent(
+                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                    ) {
+                        it.onPlayWhenReadyChanged(playWhenReady, PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
+                    }
+                     */
+                }
+                if (newState.repeatMode != oldState?.repeatMode) {
+                    listeners.queueEvent(
+                        Player.EVENT_REPEAT_MODE_CHANGED,
+                    ) {
+                        it.onRepeatModeChanged(repeatMode)
+                    }
+                }
+                if (newState.shuffleEnabled != oldState?.shuffleEnabled) {
+                    listeners.queueEvent(
+                        Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                    ) {
+                        it.onShuffleModeEnabledChanged(shuffleModeEnabled)
+                    }
+                }
+                if (newState.skipBackEnabled != oldState?.skipBackEnabled || newState.skipForwardEnabled != oldState?.skipForwardEnabled) {
+                    listeners.queueEvent(
+                        Player.EVENT_AVAILABLE_COMMANDS_CHANGED,
+                    ) {
+                        it.onAvailableCommandsChanged(availableCommands)
+                    }
+                }
+                listeners.flushEvents()
+            }
         }
     }
 
     private fun resetPlayerPositionJob() {
-        progressJob?.cancel()
-        if (playerState?.isPlaying == true) {
-            progressJob = scope.launch {
-                while (isActive) {
-                    delay(1000)
-                    playerState = playerState?.copy(
-                        trackData = playerState?.trackData?.copy(
-                            progress = playerState?.trackData?.progress?.plus(1) ?: 0
-                        )
-                    )
+        scope.launch(Dispatchers.Main) {
+            progressJob?.cancel()
+            if (playerState?.isPlaying == true) {
+                progressJob = launch {
+                    while (isActive) {
+                        delay(1000)
+                        if (isActive) {
+                            playerState = playerState?.copy(
+                                trackData = playerState?.trackData?.copy(
+                                    progress = playerState?.trackData?.progress?.plus(1) ?: 0
+                                )
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -385,8 +459,9 @@ class AMControllerService : CustomMediaControllerService() {
                 // Notification permission is required but not granted
                 return
             }
-            val notificationManagerCompat = NotificationManagerCompat.from(this@AMControllerService)
-            ensureNotificationChannel(notificationManagerCompat)
+
+            ensureNotificationChannel()
+
             val builder =
                 NotificationCompat.Builder(this@AMControllerService, NOT_CHANNEL_ID)
                     .setSmallIcon(mediaSessionRes.drawable.media3_notification_small_icon)
@@ -394,7 +469,7 @@ class AMControllerService : CustomMediaControllerService() {
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true)
                     .setContentIntent(getMainActivityIntent())
-            notificationManagerCompat.notify(JOB_ID, builder.build())
+            notificationManager.notify(JOB_ID, builder.build())
         }
     }
 
@@ -408,11 +483,11 @@ class AMControllerService : CustomMediaControllerService() {
         )
     }
 
-    private fun ensureNotificationChannel(notificationManagerCompat: NotificationManagerCompat) {
+    private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT < 26) return
 
         // Gets an instance of the NotificationManager service
-        var mChannel = notificationManagerCompat.getNotificationChannel(NOT_CHANNEL_ID)
+        var mChannel = notificationManager.getNotificationChannel(NOT_CHANNEL_ID)
         val notChannelName =
             applicationContext.getString(mediaSessionRes.string.default_notification_channel_name)
         if (mChannel == null) {
@@ -433,7 +508,7 @@ class AMControllerService : CustomMediaControllerService() {
         mChannel.setShowBadge(false)
         mChannel.enableLights(false)
         mChannel.enableVibration(false)
-        notificationManagerCompat.createNotificationChannel(mChannel)
+        notificationManager.createNotificationChannel(mChannel)
     }
 
     private fun getActionPendingIntent(action: String): PendingIntent {
