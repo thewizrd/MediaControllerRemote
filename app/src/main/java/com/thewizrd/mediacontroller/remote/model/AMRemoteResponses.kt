@@ -1,5 +1,8 @@
 package com.thewizrd.mediacontroller.remote.model
 
+import com.squareup.moshi.JsonClass
+
+@JsonClass(generateAdapter = true)
 data class PlayerStateResponse(
     val isPlaying: Boolean,
     val playPauseStopButtonState: String,
@@ -12,6 +15,7 @@ data class PlayerStateResponse(
     val isRadio: Boolean
 )
 
+@JsonClass(generateAdapter = true)
 data class TrackData(
     val duration: Int = 0,
     val artist: String? = null,
@@ -28,10 +32,12 @@ fun TrackData?.getKey(): String? {
     }
 }
 
+@JsonClass(generateAdapter = true)
 data class ArtworkResponse(
     val artwork: String? = null
 )
 
+@JsonClass(generateAdapter = true)
 data class EventMessage(
     val eventType: String,
     val payload: PlayerStateResponse

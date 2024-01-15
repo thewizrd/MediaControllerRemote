@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.thewizrd.mediacontroller.remote.services.background.AMControllerService
 import com.thewizrd.mediacontroller.remote.ui.theme.MediaControllerRemoteTheme
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private val mDnsDiscoveryViewModel: BaseDiscoveryViewModel by viewModels<MDnsDiscoveryViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge(
