@@ -25,17 +25,25 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.Commands
+import androidx.media3.common.Player.RepeatMode
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
-import com.google.common.collect.ImmutableList
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.thewizrd.mediacontroller.remote.MainActivity
+import com.thewizrd.mediacontroller.remote.R
 import com.thewizrd.mediacontroller.remote.media.BaseRemotePlayer
+import com.thewizrd.mediacontroller.remote.media.RemoteTimeline
 import com.thewizrd.mediacontroller.remote.model.AppleMusicControlButtons
 import com.thewizrd.mediacontroller.remote.model.MediaPlaybackAutoRepeatMode
+import com.thewizrd.mediacontroller.remote.model.getKey
 import com.thewizrd.mediacontroller.remote.preferences.PREFKEY_LASTSERVICEADDRESS
 import com.thewizrd.mediacontroller.remote.preferences.dataStore
 import com.thewizrd.mediacontroller.remote.viewmodels.AMPlayerState
@@ -54,6 +62,7 @@ import kotlinx.coroutines.launch
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import androidx.media3.session.R as mediaSessionRes
+import androidx.media3.ui.R as mediaUiRes
 
 class AMControllerService : CustomMediaControllerService() {
     companion object {
@@ -67,8 +76,19 @@ class AMControllerService : CustomMediaControllerService() {
         private const val ACTION_STOP_SERVICE = "MediaController.Remote.action.STOP_SERVICE"
         private const val ACTION_STOP_SERVICE_IF_NEEDED =
             "MediaController.Remote.action.STOP_SERVICE_IF_NEEDED"
+        private const val ACTION_TOGGLE_SHUFFLE = "MediaController.Remote.action.TOGGLE_SHUFFLE"
+        private const val ACTION_TOGGLE_REPEAT = "MediaController.Remote.action.TOGGLE_REPEAT"
 
         private const val EXTRA_SERVICE_URL = "MediaController.Remote.extra.SERVICE_URL"
+
+        private const val SESSION_CMD_TOGGLE_SHUFFLE_ON = "${ACTION_TOGGLE_SHUFFLE}-${false}"
+        private const val SESSION_CMD_TOGGLE_SHUFFLE_OFF = "${ACTION_TOGGLE_SHUFFLE}-${true}"
+        private const val SESSION_CMD_TOGGLE_REPEAT_ALL =
+            "${ACTION_TOGGLE_REPEAT}-${Player.REPEAT_MODE_ALL}"
+        private const val SESSION_CMD_TOGGLE_REPEAT_ONE =
+            "${ACTION_TOGGLE_REPEAT}-${Player.REPEAT_MODE_ONE}"
+        private const val SESSION_CMD_TOGGLE_REPEAT_OFF =
+            "${ACTION_TOGGLE_REPEAT}-${Player.REPEAT_MODE_OFF}"
 
         fun startService(context: Context, serviceUrl: String) {
             val intent = Intent(context.applicationContext, AMControllerService::class.java)
@@ -94,6 +114,17 @@ class AMControllerService : CustomMediaControllerService() {
                 Intent(context.applicationContext, AMControllerService::class.java)
                     .setAction(ACTION_STOP_SERVICE_IF_NEEDED)
             )
+        }
+
+        fun requestAction(context: Context, action: String) {
+            val intent = Intent(context.applicationContext, AMControllerService::class.java)
+                .setAction(action)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
     }
 
@@ -179,6 +210,22 @@ class AMControllerService : CustomMediaControllerService() {
                 }
             }
 
+            ACTION_TOGGLE_SHUFFLE -> {
+                scope.launch {
+                    if (amRemoteViewModel.isInitialized()) {
+                        amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.SHUFFLE)
+                    }
+                }
+            }
+
+            ACTION_TOGGLE_REPEAT -> {
+                scope.launch {
+                    if (amRemoteViewModel.isInitialized()) {
+                        amRemoteViewModel.value.sendCommand(AppleMusicControlButtons.REPEAT)
+                    }
+                }
+            }
+
             ACTION_STOP_SERVICE -> {
                 stopService()
             }
@@ -226,6 +273,7 @@ class AMControllerService : CustomMediaControllerService() {
             mediaSession =
                 MediaSession.Builder(this, player)
                     .setSessionActivity(getMainActivityIntent())
+                    .setCallback(AMMediaSessionCallback())
                     .build()
         }
     }
@@ -407,6 +455,12 @@ class AMControllerService : CustomMediaControllerService() {
             } ?: MediaMetadata.EMPTY
         }
 
+        override fun getCurrentTimeline(): Timeline {
+            return RemoteTimeline(isLive = playerState?.isRadio == true).apply {
+                mediaMetadata = getMediaMetadata()
+            }
+        }
+
         override fun getDuration(): Long {
             return playerState?.trackData?.duration?.toLong()
                 ?.takeIf { it >= 0 }
@@ -420,11 +474,16 @@ class AMControllerService : CustomMediaControllerService() {
 
         fun invalidatePlayerState(oldState: AMPlayerState?, newState: AMPlayerState) {
             mainHandler.post {
-                if (newState.trackData != oldState?.trackData) {
+                if (newState.trackData?.getKey() != oldState?.trackData?.getKey() || newState.artwork != oldState?.artwork) {
                     listeners.queueEvent(
                         Player.EVENT_MEDIA_METADATA_CHANGED,
                     ) {
                         it.onMediaMetadataChanged(mediaMetadata)
+                    }
+                    listeners.queueEvent(
+                        Player.EVENT_TIMELINE_CHANGED,
+                    ) {
+                        it.onTimelineChanged(currentTimeline, TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
                     }
                 }
                 if (newState.isPlaying != oldState?.isPlaying) {
@@ -468,6 +527,21 @@ class AMControllerService : CustomMediaControllerService() {
                     ) {
                         it.onAvailableCommandsChanged(availableCommands)
                     }
+                }
+                if (newState.isRadio != oldState?.isRadio) {
+                    listeners.queueEvent(
+                        Player.EVENT_TIMELINE_CHANGED,
+                    ) {
+                        it.onTimelineChanged(currentTimeline, TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+                    }
+                }
+                if (newState.repeatMode != oldState?.repeatMode || newState.shuffleEnabled != oldState?.shuffleEnabled) {
+                    mediaSession?.setCustomLayout(
+                        getCustomCommands(
+                            shuffleOn = shuffleModeEnabled,
+                            repeatMode = repeatMode
+                        )
+                    )
                 }
                 listeners.flushEvents()
             }
@@ -562,7 +636,7 @@ class AMControllerService : CustomMediaControllerService() {
         notificationManager.createNotificationChannel(mChannel)
     }
 
-    @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission", "PrivateResource")
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         if (!startedByUser && shouldStopForeground(session)) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -572,7 +646,9 @@ class AMControllerService : CustomMediaControllerService() {
 
         Util.postOrRun(Handler(session.player.applicationLooper)) {
             val notification = notificationProvider.createNotification(
-                session, ImmutableList.of(), actionFactory
+                session,
+                session.customLayout,
+                actionFactory
             ) { mediaNotification ->
                 updateNotificationInternal(session, mediaNotification, startInForegroundRequired)
             }
@@ -657,7 +733,9 @@ class AMControllerService : CustomMediaControllerService() {
             return NotificationCompat.Action(
                 customCommandButton.iconResId,
                 customCommandButton.displayName,
-                createMediaActionPendingIntent(
+                customCommandButton.sessionCommand?.let {
+                    getActionPendingIntent(it.customAction)
+                } ?: createMediaActionPendingIntent(
                     mediaSession,
                     customCommandButton.playerCommand.toLong()
                 )
@@ -687,10 +765,158 @@ class AMControllerService : CustomMediaControllerService() {
                     getActionPendingIntent(ACTION_STOP_SERVICE)
                 }
 
+                Player.COMMAND_SET_SHUFFLE_MODE -> {
+                    getActionPendingIntent(ACTION_TOGGLE_SHUFFLE)
+                }
+
+                Player.COMMAND_SET_REPEAT_MODE -> {
+                    getActionPendingIntent(ACTION_TOGGLE_REPEAT)
+                }
+
                 else -> getActionPendingIntent("")
             }
         }
 
+    }
+
+    private fun getCustomCommands(
+        shuffleOn: Boolean = mediaSession?.player?.shuffleModeEnabled == true,
+        repeatMode: Int = mediaSession?.player?.repeatMode ?: Player.REPEAT_MODE_OFF
+    ): List<CommandButton> {
+        return listOf(getShuffleCommandButton(shuffleOn), getRepeatCommandButton(repeatMode))
+    }
+
+    private fun getShuffleCommandButton(
+        shuffleOn: Boolean = mediaSession?.player?.shuffleModeEnabled == true,
+        enabled: Boolean = true
+    ): CommandButton {
+        return CommandButton.Builder()
+            .apply {
+                setDisplayName(
+                    getString(
+                        if (shuffleOn) {
+                            mediaUiRes.string.exo_controls_shuffle_on_description
+                        } else {
+                            mediaUiRes.string.exo_controls_shuffle_off_description
+                        }
+                    )
+                )
+                setEnabled(enabled)
+                setIconResId(
+                    if (shuffleOn) {
+                        R.drawable.ic_rounded_shuffle_on
+                    } else {
+                        R.drawable.ic_rounded_shuffle
+                    }
+                )
+                setSessionCommand(
+                    SessionCommand(
+                        "${ACTION_TOGGLE_SHUFFLE}-${shuffleOn}",
+                        Bundle.EMPTY
+                    )
+                )
+            }
+            .build()
+    }
+
+    private fun getRepeatCommandButton(
+        @RepeatMode repeatMode: Int = mediaSession?.player?.repeatMode ?: Player.REPEAT_MODE_OFF,
+        enabled: Boolean = true
+    ): CommandButton {
+        return CommandButton.Builder()
+            .apply {
+                setDisplayName(
+                    getString(
+                        when (repeatMode) {
+                            Player.REPEAT_MODE_ALL -> mediaUiRes.string.exo_controls_repeat_all_description
+                            Player.REPEAT_MODE_ONE -> mediaUiRes.string.exo_controls_repeat_one_description
+                            else -> mediaUiRes.string.exo_controls_repeat_off_description
+                        }
+                    )
+                )
+                setEnabled(enabled)
+                setIconResId(
+                    when (repeatMode) {
+                        Player.REPEAT_MODE_ALL -> R.drawable.ic_rounded_repeat_on
+                        Player.REPEAT_MODE_ONE -> R.drawable.ic_rounded_repeat_one_on
+                        else -> R.drawable.ic_rounded_repeat
+                    }
+                )
+                setSessionCommand(
+                    SessionCommand(
+                        "${ACTION_TOGGLE_REPEAT}-${repeatMode}",
+                        Bundle.EMPTY
+                    )
+                )
+            }
+            .build()
+    }
+
+    @Suppress("PrivatePropertyName")
+    private inner class AMMediaSessionCallback : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val connectionResult = super.onConnect(session, controller)
+            val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+                .add(SessionCommand(SESSION_CMD_TOGGLE_SHUFFLE_OFF, Bundle.EMPTY))
+                .add(SessionCommand(SESSION_CMD_TOGGLE_SHUFFLE_ON, Bundle.EMPTY))
+                .add(SessionCommand(SESSION_CMD_TOGGLE_REPEAT_OFF, Bundle.EMPTY))
+                .add(SessionCommand(SESSION_CMD_TOGGLE_REPEAT_ONE, Bundle.EMPTY))
+                .add(SessionCommand(SESSION_CMD_TOGGLE_REPEAT_ALL, Bundle.EMPTY))
+
+            return MediaSession.ConnectionResult.accept(
+                availableSessionCommands.build(),
+                connectionResult.availablePlayerCommands
+            )
+        }
+
+        override fun onPostConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ) {
+            super.onPostConnect(session, controller)
+            // Let the controller know about the custom layout right after it connected.
+            session.setCustomLayout(controller, getCustomCommands())
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle
+        ): ListenableFuture<SessionResult> {
+            val player = session.player
+
+            when {
+                customCommand.customAction.startsWith(ACTION_TOGGLE_SHUFFLE) -> {
+                    val newState = player.shuffleModeEnabled.not()
+                    player.shuffleModeEnabled = newState
+
+                    player.addListener(object : Player.Listener {
+                        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                            player.removeListener(this)
+                            session.setCustomLayout(getCustomCommands())
+                        }
+                    })
+                }
+
+                customCommand.customAction.startsWith(ACTION_TOGGLE_REPEAT) -> {
+                    val newState = player.repeatMode.minus(1).mod(3)
+                    player.repeatMode = newState
+
+                    player.addListener(object : Player.Listener {
+                        override fun onRepeatModeChanged(repeatMode: Int) {
+                            player.removeListener(this)
+                            session.setCustomLayout(getCustomCommands())
+                        }
+                    })
+                }
+            }
+
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS));
+        }
     }
 
     private fun getActionPendingIntent(action: String): PendingIntent {

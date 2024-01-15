@@ -17,7 +17,8 @@ data class AMPlayerState(
     val skipBackEnabled: Boolean = false,
     val artwork: Artwork? = null,
     val trackData: TrackData? = null,
-    val skipForwardEnabled: Boolean = false
+    val skipForwardEnabled: Boolean = false,
+    val isRadio: Boolean = false
 )
 
 fun PlayerStateResponse.toAMPlayerState(): AMPlayerState {
@@ -30,6 +31,7 @@ fun PlayerStateResponse.toAMPlayerState(): AMPlayerState {
         trackData = trackData,
         skipForwardEnabled = skipForwardEnabled,
         artwork = Artwork(artwork?.let { Base64.decode(it, Base64.DEFAULT) }),
+        isRadio = isRadio
     )
 }
 

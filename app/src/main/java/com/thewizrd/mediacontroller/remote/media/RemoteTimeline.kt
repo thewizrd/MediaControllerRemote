@@ -5,12 +5,32 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Timeline
 
-class RemoteTimeline : Timeline() {
+class RemoteTimeline : Timeline {
     companion object {
         val DEFAULT by lazy { RemoteTimeline() }
     }
 
-    override fun getWindowCount(): Int = 3
+    constructor() : super()
+    constructor(isLive: Boolean) : this() {
+        this.isLive = isLive
+    }
+
+    private var isLive: Boolean = false
+        set(value) {
+            field = value
+
+            liveConfiguration = if (value) {
+                MediaItem.LiveConfiguration.Builder().build()
+            } else {
+                null
+            }
+        }
+
+    private var liveConfiguration: MediaItem.LiveConfiguration? = null
+
+    var mediaMetadata: MediaMetadata = MediaMetadata.EMPTY
+
+    override fun getWindowCount(): Int = 1
 
     override fun getWindow(
         windowIndex: Int,
@@ -20,20 +40,20 @@ class RemoteTimeline : Timeline() {
         window.set(
             0,
             MediaItem.Builder()
-                .setMediaMetadata(MediaMetadata.EMPTY)
+                .setMediaMetadata(mediaMetadata)
                 .build(),
             null,
             C.TIME_UNSET,
             C.TIME_UNSET,
             C.TIME_UNSET,
             false,
-            false,
-            null,
-            0,
-            0,
-            0,
-            0,
-            0
+            isLive,
+            liveConfiguration,
+            C.TIME_UNSET,
+            C.TIME_UNSET,
+            C.INDEX_UNSET,
+            C.INDEX_UNSET,
+            C.TIME_UNSET
         )
         return window
     }
@@ -56,7 +76,7 @@ class RemoteTimeline : Timeline() {
 
     override fun getFirstWindowIndex(shuffleModeEnabled: Boolean): Int = 0
 
-    override fun getLastWindowIndex(shuffleModeEnabled: Boolean): Int = 2
+    override fun getLastWindowIndex(shuffleModeEnabled: Boolean): Int = if (isLive) 0 else 2
 
     override fun getPeriodCount(): Int = 1
 

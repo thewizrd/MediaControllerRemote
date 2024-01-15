@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.rounded.ShuffleOn
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.StopCircle
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +60,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
@@ -175,10 +179,44 @@ fun PlayerContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(10f)
                 ) {
-                    PlayerSlider(
-                        progress = playerState.trackData?.progress?.toFloat() ?: 0f,
-                        duration = (playerState.trackData?.duration ?: 1).toFloat(),
-                    )
+                    if (playerState.isRadio) {
+                        Box(
+                            contentAlignment = Alignment.Center
+                        ) {
+                            PlayerSlider()
+                            Card(
+                                colors = CardDefaults.elevatedCardColors(
+                                    containerColor = Color(
+                                        ColorUtils.blendARGB(
+                                            MaterialTheme.colorScheme.primary.toArgb(),
+                                            Color.Black.toArgb(),
+                                            0.25f
+                                        )
+                                    ),
+                                    contentColor = Color(
+                                        ColorUtils.blendARGB(
+                                            MaterialTheme.colorScheme.onPrimary.toArgb(),
+                                            Color.Black.toArgb(),
+                                            0.25f
+                                        )
+                                    )
+                                )
+                            ) {
+                                Text(
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                    text = "LIVE",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LocalContentColor.current
+                                )
+                            }
+                        }
+                    } else {
+                        PlayerSlider(
+                            progress = playerState.trackData?.progress?.toFloat() ?: 0f,
+                            duration = (playerState.trackData?.duration ?: 1).toFloat()
+                        )
+                    }
                     PlayerButtons(
                         modifier = Modifier.padding(vertical = 8.dp),
                         playerState = playerState,

@@ -8,7 +8,8 @@ data class PlayerStateResponse(
     val skipBackEnabled: Boolean,
     val artwork: String? = null,
     val trackData: TrackData? = null,
-    val skipForwardEnabled: Boolean
+    val skipForwardEnabled: Boolean,
+    val isRadio: Boolean
 )
 
 data class TrackData(

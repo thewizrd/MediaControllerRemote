@@ -113,7 +113,8 @@ class MediaControllerViewModel(private val ctx: Application) : AndroidViewModel(
                             Player.REPEAT_MODE_ONE -> MediaPlaybackAutoRepeatMode.TRACK
                             Player.REPEAT_MODE_ALL -> MediaPlaybackAutoRepeatMode.LIST
                             else -> MediaPlaybackAutoRepeatMode.NONE
-                        }
+                        },
+                        isRadio = controller?.isCurrentMediaItemLive == true
                     )
                 }
             }
