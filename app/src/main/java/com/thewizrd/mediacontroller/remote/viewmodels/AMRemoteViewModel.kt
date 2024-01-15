@@ -14,6 +14,7 @@ import com.thewizrd.mediacontroller.remote.services.createAMRemoteService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -69,23 +70,25 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
                 val moshi = Moshi.Builder().build()
                 val jsonAdapter = moshi.adapter(EventMessage::class.java).lenient()
 
-                response.byteStream().bufferedReader().use { reader ->
-                    while (coroutineContext.isActive) {
-                        val line = reader.readLine()
+                response.use {
+                    it.byteStream().bufferedReader().use { reader ->
+                        while (coroutineContext.isActive) {
+                            val line = reader.readLine()
 
-                        when {
-                            line.startsWith("data: ") -> {
-                                runCatching {
-                                    val json = line.substringAfter("data: ")
-                                    val event = jsonAdapter.fromJson(json)!!
-                                    emit(event)
-                                }.onFailure {
-                                    Log.e("AMRemote", "error reading player state", it)
+                            when {
+                                line.startsWith("data: ") -> {
+                                    runCatching {
+                                        val json = line.substringAfter("data: ")
+                                        val event = jsonAdapter.fromJson(json)!!
+                                        emit(event)
+                                    }.onFailure {
+                                        Log.e("AMRemote", "error reading player state", it)
+                                    }
                                 }
-                            }
 
-                            line.isEmpty() -> {
-                                // empty line; data terminator
+                                line.isEmpty() -> {
+                                    // empty line; data terminator
+                                }
                             }
                         }
                     }
@@ -97,7 +100,7 @@ class AMRemoteViewModel(serviceBaseUrl: String) : ViewModel() {
             }
         }
     }
-        .retry(retries = 1) { it is IOException }
+        .retry(retries = 1) { (it is IOException).also { if (it) delay(1000) } }
         .cancellable()
         .flowOn(Dispatchers.IO)
 
