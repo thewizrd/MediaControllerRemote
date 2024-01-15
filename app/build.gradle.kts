@@ -12,8 +12,9 @@ android {
         applicationId = "com.thewizrd.mediacontroller.remote"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // Version code format (targetSdk [xx], majorVersion[xx], minorVersion[xx], buildNum[xxx])
+        versionCode = 340100001
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
