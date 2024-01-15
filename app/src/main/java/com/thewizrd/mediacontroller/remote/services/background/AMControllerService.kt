@@ -1,16 +1,24 @@
 package com.thewizrd.mediacontroller.remote.services.background
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.C
@@ -18,8 +26,12 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.Commands
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
+import com.google.common.collect.ImmutableList
 import com.thewizrd.mediacontroller.remote.MainActivity
 import com.thewizrd.mediacontroller.remote.media.BaseRemotePlayer
 import com.thewizrd.mediacontroller.remote.model.AppleMusicControlButtons
@@ -53,6 +65,8 @@ class AMControllerService : CustomMediaControllerService() {
         private const val ACTION_SKIP_FORWARD = "MediaController.Remote.action.SKIP_FORWARD"
         private const val ACTION_SKIP_BACK = "MediaController.Remote.action.SKIP_BACK"
         private const val ACTION_STOP_SERVICE = "MediaController.Remote.action.STOP_SERVICE"
+        private const val ACTION_STOP_SERVICE_IF_NEEDED =
+            "MediaController.Remote.action.STOP_SERVICE_IF_NEEDED"
 
         private const val EXTRA_SERVICE_URL = "MediaController.Remote.extra.SERVICE_URL"
 
@@ -74,10 +88,20 @@ class AMControllerService : CustomMediaControllerService() {
                     .setAction(ACTION_STOP_SERVICE)
             )
         }
+
+        fun stopServiceIfNeeded(context: Context) {
+            context.startService(
+                Intent(context.applicationContext, AMControllerService::class.java)
+                    .setAction(ACTION_STOP_SERVICE_IF_NEEDED)
+            )
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var notificationManager: NotificationManagerCompat
+    private lateinit var notificationProvider: MediaNotification.Provider
+    private lateinit var actionFactory: MediaNotification.ActionFactory
+    private lateinit var mainHandler: Handler
 
     private var mediaSession: MediaSession? = null
     private lateinit var baseServiceUrl: String
@@ -85,6 +109,7 @@ class AMControllerService : CustomMediaControllerService() {
 
     private lateinit var amRemoteViewModel: Lazy<AMRemoteViewModel>
 
+    private var startedByUser = false
     private var isConnected = false
     private var progressJob: Job? = null
 
@@ -92,14 +117,16 @@ class AMControllerService : CustomMediaControllerService() {
     override fun onCreate() {
         super.onCreate()
 
+        mainHandler = Handler(Looper.getMainLooper())
         notificationManager = NotificationManagerCompat.from(this@AMControllerService)
-
-        setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this)
-                .setChannelId(NOT_CHANNEL_ID)
-                .setNotificationId(JOB_ID)
-                .build()
-        )
+        notificationProvider = DefaultMediaNotificationProvider.Builder(this)
+            .setChannelId(NOT_CHANNEL_ID)
+            .setNotificationId(JOB_ID)
+            .build()
+            .also {
+                setMediaNotificationProvider(it)
+            }
+        actionFactory = AMActionFactory()
 
         amRemoteViewModel = viewModels<AMRemoteViewModel>(
             factoryProducer = {
@@ -121,6 +148,7 @@ class AMControllerService : CustomMediaControllerService() {
 
         when (intent?.action) {
             ACTION_START_SERVICE -> {
+                startedByUser = true
                 intent.getStringExtra(EXTRA_SERVICE_URL)?.let { url ->
                     baseServiceUrl = url
                     initializeAMRemote()
@@ -152,11 +180,26 @@ class AMControllerService : CustomMediaControllerService() {
             }
 
             ACTION_STOP_SERVICE -> {
-                stopSelf()
+                stopService()
+            }
+
+            ACTION_STOP_SERVICE_IF_NEEDED -> {
+                mediaSession?.let {
+                    if (shouldStopForeground(it)) {
+                        stopService()
+                    }
+                } ?: {
+                    stopService()
+                }
             }
         }
 
         return result
+    }
+
+    fun stopService() {
+        startedByUser = false
+        stopSelf()
     }
 
     @OptIn(UnstableApi::class)
@@ -274,6 +317,14 @@ class AMControllerService : CustomMediaControllerService() {
                 .build()
         }
 
+        override fun getPlaybackState(): Int {
+            return if (playerState?.trackData == null && playerState?.isPlaying == false) {
+                Player.STATE_IDLE
+            } else {
+                Player.STATE_READY
+            }
+        }
+
         override fun setPlayWhenReady(playWhenReady: Boolean) {
             scope.launch {
                 val result =
@@ -368,7 +419,7 @@ class AMControllerService : CustomMediaControllerService() {
         }
 
         fun invalidatePlayerState(oldState: AMPlayerState?, newState: AMPlayerState) {
-            scope.launch(Dispatchers.Main) {
+            mainHandler.post {
                 if (newState.trackData != oldState?.trackData) {
                     listeners.queueEvent(
                         Player.EVENT_MEDIA_METADATA_CHANGED,
@@ -424,10 +475,10 @@ class AMControllerService : CustomMediaControllerService() {
     }
 
     private fun resetPlayerPositionJob() {
-        scope.launch(Dispatchers.Main) {
+        mainHandler.post {
             progressJob?.cancel()
             if (playerState?.isPlaying == true) {
-                progressJob = launch {
+                progressJob = scope.launch {
                     while (isActive) {
                         delay(1000)
                         if (isActive) {
@@ -509,6 +560,137 @@ class AMControllerService : CustomMediaControllerService() {
         mChannel.enableLights(false)
         mChannel.enableVibration(false)
         notificationManager.createNotificationChannel(mChannel)
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        if (!startedByUser && shouldStopForeground(session)) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            notificationManager.cancel(JOB_ID)
+            return
+        }
+
+        Util.postOrRun(Handler(session.player.applicationLooper)) {
+            val notification = notificationProvider.createNotification(
+                session, ImmutableList.of(), actionFactory
+            ) { mediaNotification ->
+                updateNotificationInternal(session, mediaNotification, startInForegroundRequired)
+            }
+
+            updateNotificationInternal(session, notification, startInForegroundRequired)
+        }
+    }
+
+    private fun shouldStopForeground(session: MediaSession): Boolean {
+        return !isSessionAdded(session) || session.player.playbackState == Player.STATE_IDLE || session.player.playbackState == Player.STATE_ENDED
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun updateNotificationInternal(
+        session: MediaSession,
+        mediaNotification: MediaNotification,
+        startInForegroundRequired: Boolean
+    ) {
+        Util.postOrRun(mainHandler) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                // MediaNotificationManager: Call Notification.MediaStyle#setMediaSession() indirectly.
+                val fwkToken =
+                    session.sessionCompatToken.token as? android.media.session.MediaSession.Token
+                if (fwkToken != null) {
+                    mediaNotification.notification.extras.putParcelable(
+                        Notification.EXTRA_MEDIA_SESSION,
+                        fwkToken
+                    )
+                }
+            }
+
+            if (startedByUser || startInForegroundRequired) {
+                ServiceCompat.startForeground(
+                    this@AMControllerService,
+                    mediaNotification.notificationId,
+                    mediaNotification.notification,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    } else {
+                        0
+                    }
+                )
+            } else {
+                notificationManager.notify(
+                    mediaNotification.notificationId,
+                    mediaNotification.notification
+                )
+
+                if (!startedByUser && (session.player.playbackState == Player.STATE_IDLE || session.player.playbackState == Player.STATE_ENDED)) {
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+                }
+            }
+        }
+    }
+
+    private inner class AMActionFactory : MediaNotification.ActionFactory {
+        override fun createMediaAction(
+            mediaSession: MediaSession,
+            icon: IconCompat,
+            title: CharSequence,
+            command: Int
+        ): NotificationCompat.Action {
+            return NotificationCompat.Action(
+                icon, title, createMediaActionPendingIntent(mediaSession, command.toLong())
+            )
+        }
+
+        override fun createCustomAction(
+            mediaSession: MediaSession,
+            icon: IconCompat,
+            title: CharSequence,
+            customAction: String,
+            extras: Bundle
+        ): NotificationCompat.Action {
+            return NotificationCompat.Action(icon, title, getActionPendingIntent(customAction))
+        }
+
+        override fun createCustomActionFromCustomCommandButton(
+            mediaSession: MediaSession,
+            customCommandButton: CommandButton
+        ): NotificationCompat.Action {
+            return NotificationCompat.Action(
+                customCommandButton.iconResId,
+                customCommandButton.displayName,
+                createMediaActionPendingIntent(
+                    mediaSession,
+                    customCommandButton.playerCommand.toLong()
+                )
+            )
+        }
+
+        override fun createMediaActionPendingIntent(
+            mediaSession: MediaSession,
+            command: Long
+        ): PendingIntent {
+            return when (command.toInt()) {
+                Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                    getActionPendingIntent(ACTION_SKIP_BACK)
+                }
+
+                Player.COMMAND_SEEK_TO_NEXT,
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                    getActionPendingIntent(ACTION_SKIP_FORWARD)
+                }
+
+                Player.COMMAND_PLAY_PAUSE -> {
+                    getActionPendingIntent(ACTION_PLAY_PAUSE_STOP)
+                }
+
+                Player.COMMAND_STOP -> {
+                    getActionPendingIntent(ACTION_STOP_SERVICE)
+                }
+
+                else -> getActionPendingIntent("")
+            }
+        }
+
     }
 
     private fun getActionPendingIntent(action: String): PendingIntent {

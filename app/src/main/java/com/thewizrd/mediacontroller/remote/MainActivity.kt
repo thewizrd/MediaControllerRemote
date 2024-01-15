@@ -69,5 +69,6 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         mDnsDiscoveryViewModel.stopDiscovery()
+        AMControllerService.stopServiceIfNeeded(applicationContext)
     }
 }

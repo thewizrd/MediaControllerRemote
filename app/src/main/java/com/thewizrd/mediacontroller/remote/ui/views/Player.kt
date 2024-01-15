@@ -38,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -77,6 +79,7 @@ import com.thewizrd.mediacontroller.remote.ui.util.verticalGradientScrim
 import com.thewizrd.mediacontroller.remote.viewmodels.AMPlayerState
 import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.MediaControllerViewModel
+import com.thewizrd.mediacontroller.remote.viewmodels.MediaControllerViewModel.ControllerState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
@@ -86,6 +89,7 @@ fun PlayerScreen(
     modifier: Modifier = Modifier,
     discoveryViewModel: BaseDiscoveryViewModel
 ) {
+    val lifecycleOwner = LocalLifecycleOwner.current
     val mediaCtrlrViewModel = viewModel<MediaControllerViewModel>()
 
     val playerState by mediaCtrlrViewModel.playerState.collectAsState()
@@ -100,7 +104,7 @@ fun PlayerScreen(
     )
 
     LaunchedEffect(controllerState) {
-        if (controllerState == MediaControllerViewModel.ControllerState.DISCONNECTED) {
+        if (controllerState == ControllerState.DISCONNECTED) {
             discoveryViewModel.initializeDiscovery()
         }
     }
@@ -109,6 +113,14 @@ fun PlayerScreen(
         while (isActive && playerState.isPlaying) {
             mediaCtrlrViewModel.updatePlayerPosition()
             delay(1000)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        onDispose {
+            if (controllerState == ControllerState.CONNECTED && !playerState.isPlaying && playerState.trackData == null) {
+                mediaCtrlrViewModel.releaseController()
+            }
         }
     }
 }
