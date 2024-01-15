@@ -154,6 +154,9 @@ class AMControllerService : CustomMediaControllerService() {
             .setChannelId(NOT_CHANNEL_ID)
             .setNotificationId(JOB_ID)
             .build()
+            .apply {
+                setSmallIcon(R.drawable.note_icon)
+            }
             .also {
                 setMediaNotificationProvider(it)
             }
@@ -589,7 +592,7 @@ class AMControllerService : CustomMediaControllerService() {
 
             val builder =
                 NotificationCompat.Builder(this@AMControllerService, NOT_CHANNEL_ID)
-                    .setSmallIcon(mediaSessionRes.drawable.media3_notification_small_icon)
+                    .setSmallIcon(R.drawable.note_icon)
                     .setContentText("Playback cannot be resumed")
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true)
