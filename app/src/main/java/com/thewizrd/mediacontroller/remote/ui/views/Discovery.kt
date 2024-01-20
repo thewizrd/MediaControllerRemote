@@ -22,8 +22,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.thewizrd.mediacontroller.remote.R
 import com.thewizrd.mediacontroller.remote.viewmodels.BaseDiscoveryViewModel
 import com.thewizrd.mediacontroller.remote.viewmodels.DiscoveryState
 import com.thewizrd.mediacontroller.remote.viewmodels.ServiceState
@@ -68,7 +70,7 @@ fun DiscoveryView(
         ) {
             when (discoveryState) {
                 DiscoveryState.SEARCHING -> {
-                    Text(text = "Looking for Apple Music Remote service")
+                    Text(text = stringResource(id = R.string.message_looking_for_remote_service))
                     Spacer(modifier = Modifier.height(4.dp))
                     CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     Spacer(modifier = Modifier.height(4.dp))
@@ -76,17 +78,17 @@ fun DiscoveryView(
                         modifier = Modifier.padding(ButtonDefaults.TextButtonContentPadding),
                         onClick = onStopDiscovery
                     ) {
-                        Text(text = "Stop")
+                        Text(text = stringResource(id = R.string.action_stop))
                     }
                 }
 
                 DiscoveryState.DISCOVERED -> {
-                    Text(text = "Service Discovered")
+                    Text(text = stringResource(id = R.string.message_remote_service_found))
                 }
 
                 else -> {
                     // Unknown state; not found
-                    Text(text = "Apple Music Remote service not found")
+                    Text(text = stringResource(id = R.string.message_remote_service_not_found))
                     FilledTonalButton(
                         modifier = Modifier.padding(ButtonDefaults.ButtonWithIconContentPadding),
                         onClick = onInitializeDiscovery
@@ -97,7 +99,7 @@ fun DiscoveryView(
                             contentDescription = "Search"
                         )
                         Spacer(modifier = Modifier.width(ButtonDefaults.IconSpacing))
-                        Text(text = "Search")
+                        Text(text = stringResource(id = R.string.action_search))
                     }
                 }
             }

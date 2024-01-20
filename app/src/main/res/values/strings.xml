@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Media Controller Remote</string>
+    <string name="message_looking_for_remote_service">Looking for Media Controller Remote service</string>
+    <string name="message_remote_service_not_found">Media Controller Remote service not found</string>
+    <string name="message_remote_service_found">Service Discovered</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_search">Search</string>
+    <string name="notification_fg_service_content_text">Playback cannot be resumed</string>
 </resources>
