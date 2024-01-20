@@ -1,10 +1,13 @@
 package com.thewizrd.mediacontroller.remote.media
 
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Timeline
+import androidx.media3.common.util.UnstableApi
 
+@OptIn(UnstableApi::class)
 class RemoteTimeline : Timeline {
     companion object {
         val DEFAULT by lazy { RemoteTimeline() }

@@ -5,6 +5,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.TextureView
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.BasePlayer
 import androidx.media3.common.C
@@ -23,7 +24,9 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.ListenerSet
 import androidx.media3.common.util.Size
+import androidx.media3.common.util.UnstableApi
 
+@OptIn(UnstableApi::class)
 abstract class BaseRemotePlayer : BasePlayer() {
     protected val listeners: ListenerSet<Player.Listener> = ListenerSet(
         applicationLooper, Clock.DEFAULT

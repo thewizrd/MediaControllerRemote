@@ -86,8 +86,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.media:media:1.7.0")
-    implementation("androidx.media3:media3-session:1.2.0")
-    implementation("androidx.media3:media3-ui:1.2.0")
+    implementation("androidx.media3:media3-session:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
 

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -64,6 +65,7 @@ import java.util.concurrent.TimeUnit
 import androidx.media3.session.R as mediaSessionRes
 import androidx.media3.ui.R as mediaUiRes
 
+@OptIn(UnstableApi::class)
 class AMControllerService : CustomMediaControllerService() {
     companion object {
         private const val JOB_ID = 1000
@@ -144,7 +146,6 @@ class AMControllerService : CustomMediaControllerService() {
     private var isConnected = false
     private var progressJob: Job? = null
 
-    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -176,7 +177,6 @@ class AMControllerService : CustomMediaControllerService() {
         setListener(MediaSessionServiceListener())
     }
 
-    @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val result = super.onStartCommand(intent, flags, startId)
 
@@ -186,7 +186,7 @@ class AMControllerService : CustomMediaControllerService() {
                 intent.getStringExtra(EXTRA_SERVICE_URL)?.let { url ->
                     baseServiceUrl = url
                     initializeAMRemote()
-                } ?: stopSelf()
+                } ?: stopService()
             }
 
             ACTION_PLAY_PAUSE_STOP -> {
@@ -249,11 +249,21 @@ class AMControllerService : CustomMediaControllerService() {
 
     fun stopService() {
         startedByUser = false
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+
+        // Release media session
+        releaseMediaSession()
     }
 
-    @OptIn(UnstableApi::class)
+    private fun releaseMediaSession() {
+        mediaSession?.player?.release()
+        mediaSession?.release()
+        mediaSession = null
+    }
+
     override fun onDestroy() {
+        Log.d("AMController", "onDestroy")
         runCatching {
             if (amRemoteViewModel.isInitialized()) {
                 amRemoteViewModel.value.stopPolling()
@@ -262,13 +272,10 @@ class AMControllerService : CustomMediaControllerService() {
         progressJob?.cancel()
         scope.cancel()
         isConnected = false
-        mediaSession?.player?.release()
-        mediaSession?.release()
-        mediaSession = null
+        releaseMediaSession()
         super.onDestroy()
     }
 
-    @OptIn(UnstableApi::class)
     private fun initializeSessionAndPlayer() {
         if (mediaSession == null) {
             val player = MediaPlayer()
@@ -293,7 +300,7 @@ class AMControllerService : CustomMediaControllerService() {
                     vm.connectionErrors.collectLatest {
                         if (it is IOException) {
                             isConnected = false
-                            stopSelf()
+                            stopService()
                         }
                     }
                 }
@@ -335,14 +342,13 @@ class AMControllerService : CustomMediaControllerService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         mediaSession?.player?.let { player ->
             if (!player.playWhenReady || player.mediaItemCount == 0) {
-                stopSelf()
+                stopService()
             }
         } ?: {
-            stopSelf()
+            stopService()
         }
     }
 
-    @UnstableApi
     private inner class MediaPlayer : BaseRemotePlayer() {
         override fun getAvailableCommands(): Commands {
             return Commands.Builder()
@@ -365,6 +371,7 @@ class AMControllerService : CustomMediaControllerService() {
                 .add(Player.COMMAND_GET_METADATA)
                 .add(Player.COMMAND_GET_TIMELINE)
                 .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
+                .add(Player.COMMAND_RELEASE)
                 .build()
         }
 
@@ -435,7 +442,7 @@ class AMControllerService : CustomMediaControllerService() {
         }
 
         override fun stop() {
-            stopSelf()
+            stopService()
         }
 
         override fun release() {
@@ -571,7 +578,6 @@ class AMControllerService : CustomMediaControllerService() {
         }
     }
 
-    @OptIn(UnstableApi::class)
     private inner class MediaSessionServiceListener : Listener {
         /**
          * This method is only required to be implemented on Android 12 or above when an attempt is made
@@ -855,7 +861,6 @@ class AMControllerService : CustomMediaControllerService() {
             .build()
     }
 
-    @Suppress("PrivatePropertyName")
     private inner class AMMediaSessionCallback : MediaSession.Callback {
         override fun onConnect(
             session: MediaSession,
